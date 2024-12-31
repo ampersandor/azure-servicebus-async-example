@@ -56,31 +56,42 @@ def server_main():
     print(f"연결 문자열: {CONNECTION_STR[:50]}...")
     
     servicebus_client = ServiceBusClient.from_connection_string(CONNECTION_STR)
-    concurrent_receivers = 5  # 동시 처리할 세션 수
+    concurrent_receivers = 5
     
     with servicebus_client:
         sender = servicebus_client.get_queue_sender(queue_name=RESPONSE_QUEUE_NAME)
         
-        while True:
-            try:
-                futures = []
-                with concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_receivers) as thread_pool:
-                    # 여러 세션을 동시에 처리하기 위한 태스크 생성
-                    for _ in range(concurrent_receivers):
-                        future = thread_pool.submit(
-                            handle_session, 
-                            servicebus_client, 
-                            sender, 
-                            REQUEST_QUEUE_NAME
-                        )
-                        futures.append(future)
+        # ThreadPoolExecutor를 while 루프 밖에 생성
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_receivers) as thread_pool:
+            while True:
+                try:
+                    # 현재 실행 중인 future의 개수 확인
+                    running_futures = list(filter(lambda x: not x.done(), futures)) if 'futures' in locals() else []
                     
-                    # 모든 태스크가 완료될 때까지 대기
-                    concurrent.futures.wait(futures)
+                    # 추가로 필요한 스레드 수 계산
+                    needed_threads = concurrent_receivers - len(running_futures)
                     
-            except Exception as e:
-                print(f"에러 발생: {str(e)}")
-                time.sleep(1)
+                    # 필요한 만큼만 새로운 스레드 생성
+                    if needed_threads > 0:
+                        new_futures = [
+                            thread_pool.submit(
+                                handle_session, 
+                                servicebus_client, 
+                                sender, 
+                                REQUEST_QUEUE_NAME
+                            )
+                            for _ in range(needed_threads)
+                        ]
+                        
+                        # 실행 중인 futures 리스트 업데이트
+                        futures = running_futures + new_futures
+                    
+                    # 잠시 대기 (과도한 CPU 사용 방지)
+                    time.sleep(0.1)
+                        
+                except Exception as e:
+                    print(f"에러 발생: {str(e)}")
+                    time.sleep(1)
 
 if __name__ == "__main__":
     server_main()
