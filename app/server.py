@@ -3,6 +3,8 @@ from azure.servicebus.exceptions import OperationTimeoutError
 import dotenv
 import os
 import time
+import concurrent.futures
+from typing import List
 
 # .env 파일 로드
 dotenv.load_dotenv()
@@ -18,68 +20,64 @@ def process_message(message, session_id):
     # 처리된 결과를 반환
     return f"안녕하세요! {session_id}번 클라이언트님 전 서버에요 반가워요!"
 
+def handle_session(servicebus_client, sender, queue_name):
+    try:
+        with servicebus_client.get_queue_receiver(
+            queue_name=queue_name,
+            session_id=NEXT_AVAILABLE_SESSION,
+            max_wait_time=5
+        ) as receiver:
+            print(f"세션 연결됨: {receiver.session.session_id}")
+            receiver.session.set_state("OPEN")
+            
+            for message in receiver:
+                try:
+                    print(f"\n새 메시지 수신: {message.session_id} - {str(message)}")
+                    
+                    result = process_message(str(message), message.session_id)
+                    response = ServiceBusMessage(result, session_id=message.session_id)
+                    sender.send_messages(response)
+                    
+                    receiver.complete_message(message)
+                    print(f"응답 전송 완료: {result}")
+                    
+                except Exception as msg_error:
+                    print(f"메시지 처리 중 에러: {str(msg_error)}")
+                    receiver.abandon_message(message)
+            
+            receiver.session.set_state("CLOSED")
+            
+    except OperationTimeoutError:
+        print("사용 가능한 세션 없음")
+    except Exception as e:
+        print(f"세션 처리 중 에러: {str(e)}")
+
 def server_main():
-    print(f"연결 문자열: {CONNECTION_STR[:50]}...")  # 보안을 위해 일부만 출력
-    print(f"요청 큐: {REQUEST_QUEUE_NAME}")
-    print(f"응답 큐: {RESPONSE_QUEUE_NAME}")
+    print(f"연결 문자열: {CONNECTION_STR[:50]}...")
     
     servicebus_client = ServiceBusClient.from_connection_string(CONNECTION_STR)
-    
-    print("서버가 시작되었습니다. 메시지 대기 중...")
+    concurrent_receivers = 5  # 동시 처리할 세션 수
     
     with servicebus_client:
-        # 응답 sender 생성
         sender = servicebus_client.get_queue_sender(queue_name=RESPONSE_QUEUE_NAME)
         
         while True:
             try:
-                print("\n세션 대기 중...")
-                
-                # 다음 사용 가능한 세션으로 수신자 생성
-                with servicebus_client.get_queue_receiver(
-                    queue_name=REQUEST_QUEUE_NAME,
-                    session_id=NEXT_AVAILABLE_SESSION,
-                    max_wait_time=5
-                ) as receiver:
-                    print(f"세션 연결됨: {receiver.session.session_id}")
+                futures = []
+                with concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_receivers) as thread_pool:
+                    # 여러 세션을 동시에 처리하기 위한 태스크 생성
+                    for _ in range(concurrent_receivers):
+                        future = thread_pool.submit(
+                            handle_session, 
+                            servicebus_client, 
+                            sender, 
+                            REQUEST_QUEUE_NAME
+                        )
+                        futures.append(future)
                     
-                    # 세션 상태 설정
-                    receiver.session.set_state("OPEN")
+                    # 모든 태스크가 완료될 때까지 대기
+                    concurrent.futures.wait(futures)
                     
-                    # 메시지 수신 및 처리
-                    for message in receiver:
-                        try:
-                            print("\n새 메시지 수신:")
-                            print(f"세션 ID: {message.session_id}")
-                            print(f"시퀀스 번호: {message.sequence_number}")
-                            print(f"내용: {str(message)}")
-                            
-                            # 메시지 처리
-                            result = process_message(str(message), message.session_id)
-                            
-                            # 응답 전송
-                            response = ServiceBusMessage(
-                                result,
-                                session_id=message.session_id
-                            )
-                            sender.send_messages(response)
-                            print(f"응답 전송 완료: {result}")
-                            
-                            # 메시지 완료 처리
-                            receiver.complete_message(message)
-                            
-                        except Exception as msg_error:
-                            print(f"메시지 처리 중 에러: {str(msg_error)}")
-                            receiver.abandon_message(message)
-                    
-                    # 세션 종료
-                    receiver.session.set_state("CLOSED")
-                    
-            except OperationTimeoutError:
-                print("사용 가능한 세션 없음")
-                time.sleep(1)
-                continue
-                
             except Exception as e:
                 print(f"에러 발생: {str(e)}")
                 time.sleep(1)
