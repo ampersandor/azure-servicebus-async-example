@@ -46,11 +46,14 @@ async def handle_message(servicebus_client, sender, queue_name):
                     
                     await receiver.complete_message(message)
                     print(f"응답 전송 완료: {result}")
+                    await receiver.session.set_state("CLOSED")
+                    return
                     
                 except Exception as msg_error:
                     print(f"메시지 처리 중 에러: {str(msg_error)}")
+                    await receiver.session.set_state("ERROR")
                     await receiver.abandon_message(message)
-            await receiver.session.set_state("CLOSED")
+                    return
             print(f"세션 닫힘: {receiver.session.session_id}")
     except Exception as session_error:
         print(f"세션 처리 중 에러: {str(session_error)}")
