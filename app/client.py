@@ -25,7 +25,7 @@ def client_main():
         receiver = servicebus_client.get_queue_receiver(
             queue_name=RESPONSE_QUEUE_NAME,
             session_id=session_id,
-            max_wait_time=5
+            max_wait_time=100000
         )
         
         with sender, receiver:
