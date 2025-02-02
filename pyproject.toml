@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "session-batch-server"
+version = "0.1.0"
+description = ""
+authors = ["DongHunKim <ddong3525@naver.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = "^0.111.0"
+pydantic = "^2.7.3"
+pydantic-core = "^2.18.4"
+python-dotenv = "^1.0.1"
+uvicorn = "^0.30.1"
+pika = "^1.3.2"
+httpx = "^0.27.0"
+pyjwt = "^2.8.0"
+requests = "^2.32.3"
+python-multipart = "^0.0.9"
+xmltodict = "^0.13.0"
+diskcache = "^5.6.3"
+biopython = "^1.83"
+redis = "^5.0.5"
+sqlalchemy = "^2.0.37"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
