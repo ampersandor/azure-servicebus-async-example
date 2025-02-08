@@ -2,8 +2,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.config.psql_config import PSQLConfig
-from src.model.result import Result
-from .base_repository import BaseRepository
+from src.models.result import Result, ResultStatus
+from src.repository.base_repository import BaseRepository
 
 class ResultRepository:
     def __init__(self):
@@ -15,16 +15,26 @@ class ResultRepository:
             self.engine, class_=AsyncSession, expire_on_commit=False
         )
 
-    async def save_result(self, data: dict[str, str]) -> None:
+    async def create_result(self, result_id: str) -> None:
         """Save result to database"""
         async with self.async_session() as session:
             repo = BaseRepository(Result, session)
             await repo.create(
-                result_id=data["result_id"],
-                command=data["command"],
-                result_path=data["result_path"],
-                session_id=data["session_id"]
+                result_id=result_id,
+                status=ResultStatus.PENDING
             )
+    
+    async def update_status(self, result_id: str, status: ResultStatus) -> None:
+        """Update result status"""
+        async with self.async_session() as session:
+            repo = BaseRepository(Result, session)
+            await repo.update(result_id=result_id, status=status)
+    
+    async def update_result_path(self, result_id: str, result_path: str) -> None:
+        """Update result path"""
+        async with self.async_session() as session:
+            repo = BaseRepository(Result, session)
+            await repo.update(result_id=result_id, result_path=result_path)
 
     async def get_result(self, result_id: str) -> Result | None:
         """Get result by result_id"""

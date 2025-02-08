@@ -3,33 +3,47 @@ import json
 import os
 from datetime import datetime
 import logging
+import traceback
 
 import dotenv
 from azure.servicebus.aio import ServiceBusClient, ServiceBusSender
 from azure.servicebus import ServiceBusMessage, NEXT_AVAILABLE_SESSION
 from asyncio.tasks import Task
+from azure.servicebus.exceptions import OperationTimeoutError, ServiceBusError
+from azure.core.exceptions import ServiceRequestError
 
-from service.batch_service import BatchClient
-from repository.task_repository import RedisConnector
-from dto import BatchRequest, BatchResponse
-from utils.teams_alert import send_alert
-from config.servicebus_config import ServiceBusConfig
+from src.service.batch_service import BatchService
+from src.repository.redis_repository import RedisConnector
+from src.dto import RequestMessage, ResponseMessage
+from src.utils.teams_alert import send_alert
+from src.config.servicebus_config import ServiceBusConfig
+from src.repository.request_repository import RequestRepository
+import src.utils.myLogger
 
 dotenv.load_dotenv()
 
 
 class ServiceBusServer:
     def __init__(self):
-        self.max_workers: int = 2
+        self.max_workers: int = 1
         self.active_tasks: set[Task] = set()
-        self.batch_client: BatchClient = BatchClient()
+        self.batch_client: BatchService = BatchService()
         self.redis: RedisConnector = RedisConnector()
-        self.servicebus_config: ServiceBusConfig = ServiceBusConfig()
+        self.request_repo = RequestRepository()
 
     async def start(self) -> None:
         """서버 시작 시 초기화 및 작업 복구"""
         logging.info("Initialize server...")
-        await self.recover_active_tasks()
+        
+        # Redis 연결 테스트
+        try:
+            await self.redis.redis.ping()
+            logging.info("Redis connection successful")
+        except Exception as e:
+            logging.error(f"Redis connection failed: {e}")
+            raise
+            
+        # await self.recover_active_tasks()
         await self.run()
 
     async def stop(self) -> None:
@@ -52,9 +66,8 @@ class ServiceBusServer:
     async def recover_active_tasks(self) -> None:
         """Redis에서 이전 작업 상태 복구"""
         stored_tasks = await self.redis.get_all_tasks()
-
-        async with ServiceBusClient.from_connection_string(self.servicebus_config.connection_str) as servicebus_client:
-            async with servicebus_client.get_queue_sender(queue_name=self.servicebus_config.response_queue) as sender:
+        async with ServiceBusClient.from_connection_string(ServiceBusConfig.connection_str) as servicebus_client:
+            async with servicebus_client.get_queue_sender(queue_name=ServiceBusConfig.response_queue) as sender:
                 for task_id, state in stored_tasks.items():
                     try:
                         logging.info(f"Restore saved requests from Redis: {task_id}")
@@ -62,7 +75,7 @@ class ServiceBusServer:
                             self.handle_message(
                                 servicebus_client=servicebus_client,
                                 sender=sender,
-                                queue_name=self.servicebus_config.request_queue,
+                                queue_name=ServiceBusConfig.request_queue,
                                 recovery_state=state,
                             )
                         )
@@ -85,103 +98,123 @@ class ServiceBusServer:
         try:
             if recovery_state:
                 # 복구된 상태에서 BatchRequest 생성
-                request = BatchRequest.from_dict(recovery_state)
+                request = RequestMessage.from_dict(recovery_state)
                 result_paths = await self.batch_client.run(
-                    request.session_id,
-                    request.timestamp,
+                    request.job_id,
                     request.command,
                 )
 
-                response = BatchResponse(session_id=request.session_id, result_paths=result_paths, status="completed")
+                response = ResponseMessage(job_id=request.job_id, result_paths=result_paths, status="completed")
 
                 # Service Bus 메시지로 변환하여 전송
-                message = ServiceBusMessage(json.dumps(response.to_dict()), session_id=response.session_id)
+                message = ServiceBusMessage(json.dumps(response.to_dict()), job_id=response.job_id)
                 await sender.send_messages(message)
-                await self.remove_task_state(request.session_id)
+                await self.remove_task_state(request.job_id)
 
-                logging.info(f"Session closed: {request.session_id}")
+                logging.info(f"Job closed: {request.job_id}")
 
             else:
-                async with servicebus_client.get_queue_receiver(
-                    queue_name=queue_name, session_id=NEXT_AVAILABLE_SESSION, max_wait_time=100
-                ) as receiver:
-                    await receiver.session.set_state("OPEN")
-                    status = await receiver.session.get_state()
-                    logging.info(f"Session connected: {receiver.session.session_id}: {status}")
-
-                    async for message in receiver:
-                        try:
-                            # 수신된 메시지를 BatchRequest로 변환
-                            request = BatchRequest.from_dict(json.loads(str(message)))
-                            logging.info(f"Run Batch with new request: {request}")
-
-                            # 메시지 완료 처리
-                            await receiver.complete_message(message)
-                            logging.info(f"\nNew message received: {request}")
-
-                            # Redis에 작업 상태 저장
-                            await self.save_task_state(request.session_id, request.to_dict())
-
-                            result_paths = await self.batch_client.run(
-                                request.session_id,
-                                request.timestamp,
-                                request.command,
-                            )
-
-                            response = BatchResponse(
-                                session_id=request.session_id, result_paths=result_paths, status="completed"
-                            )
-
-                            # response를 직렬화
-                            message = ServiceBusMessage(json.dumps(response.to_dict()), session_id=response.session_id)
-                            await sender.send_messages(message)
-
-                            logging.info(f"Message sent successfully: {response}")
-
-                            # Redis에서 작업 상태 제거
-                            await self.remove_task_state(receiver.session.session_id)
-
-                            # 세션 종료
-                            await receiver.session.set_state("CLOSED")
-                            status = await receiver.session.get_state()
-                            logging.info(f"Session closed: {receiver.session.session_id}: {status}")
-                            await self.send_alert(f"Batch request success: {response}")
+                try:
+                    async with servicebus_client.get_queue_receiver(
+                        queue_name=queue_name, 
+                        session_id=NEXT_AVAILABLE_SESSION, 
+                        max_wait_time=30,
+                        prefetch_count=0
+                    ) as receiver:
+                        if not receiver.session:
+                            logging.info("No available session, will retry...")
                             return
+                                               
+                        await receiver.session.set_state("OPEN")
+                        status = await receiver.session.get_state()
+                        logging.info(f"Session connected: {receiver.session.session_id}: {status}")
+                        session_id = receiver.session.session_id
 
-                        except Exception as msg_error:
-                            error_response = BatchResponse(
-                                session_id=request.session_id,
-                                result_paths="",
-                                status="error",
-                                error_message=str(msg_error),
-                            )
-                            logging.error(msg_error)
-                            # 에러 응답도 JSON 직렬화
-                            error_message = ServiceBusMessage(
-                                json.dumps(error_response.to_dict()), session_id=request.session_id
-                            )
-                            await sender.send_messages(error_message)
-                            await self.send_alert(f"Batch request failed: {error_response}")
-                            return
+                        async for message in receiver:
+                            try:
+                                # 수신된 메시지를 BatchRequest로 변환
+                                print(json.loads(str(message)))
+                                req_msg = RequestMessage.from_dict(json.loads(str(message)))
+                                req = await self.request_repo.create_request(req_msg.session_id, req_msg.command)
+                                logging.info(f"Run Batch with new request: {req}")
+
+                                # 메시지 완료 처리
+                                await receiver.complete_message(message)
+                                logging.info(f"\nNew message received: {req_msg}")
+
+                                # Redis에 작업 상태 저장
+                                await self.save_task_state(req_msg.session_id, req_msg.to_dict())
+
+                                result_paths = await self.batch_client.run(req)
+                                logging.info(f"Batch request success: {result_paths}")
+                                response = ResponseMessage(
+                                    session_id=req_msg.session_id, result_paths=result_paths, status="completed"
+                                )
+
+                                # response를 직렬화
+                                message = ServiceBusMessage(json.dumps(response.to_dict()), session_id=response.session_id)
+                                await sender.send_messages(message)
+
+                                logging.info(f"Message sent successfully: {response}")
+
+                                # Redis에서 작업 상태 제거
+                                await self.remove_task_state(receiver.session.session_id)
+
+                                # 세션 종료
+                                await receiver.session.set_state("CLOSED")
+                                status = await receiver.session.get_state()
+                                logging.info(f"Session closed: {receiver.session.session_id}: {status}")
+                                await send_alert(f"Batch request success: {response}")
+                                return
+
+                            except Exception as msg_error:
+                                error_response = ResponseMessage(
+                                    session_id=session_id,
+                                    result_paths="",
+                                    status="error",
+                                    error_message=str(msg_error),
+                                )
+                                logging.error(msg_error)
+                                # 에러 응답도 JSON 직렬화
+                                error_message = ServiceBusMessage(
+                                    json.dumps(error_response.to_dict()), session_id=session_id
+                                )
+                                await sender.send_messages(error_message)
+                                await send_alert(f"Batch request failed: {error_response}")
+                                return
+
+                except OperationTimeoutError:
+                    logging.info("No available session, waiting for next attempt...")
+                    await asyncio.sleep(1)
+                    return
+                except ServiceBusError as sb_error:
+                    if "timeout" in str(sb_error).lower():
+                        logging.info("Service Bus timeout, will retry...")
+                        await asyncio.sleep(1)
+                    else:
+                        logging.error(f"Service Bus error: {str(sb_error)}")
+                        await asyncio.sleep(5)
+                    return
+                except ServiceRequestError as req_error:
+                    logging.error(f"Service request error: {str(req_error)}")
+                    await asyncio.sleep(5)
+                    return
+                except Exception as e:
+                    error_trace = traceback.format_exc()
+                    logging.error(f"Unexpected error: {str(e)}")
+                    logging.error(f"Error traceback: {error_trace}")
+                    await asyncio.sleep(5)
+                    return
 
         except Exception as e:
-            logging.error(f"Error while handling the message: {str(e)}")
-            if recovery_state:
-                error_state = {
-                    **recovery_state,
-                    "status": "error",
-                    "error": str(e),
-                    "timestamp": datetime.now().isoformat(),
-                }
-                await self.save_task_state(recovery_state["session_id"], error_state)
-
-            raise
+            logging.error(f"Critical error: {str(e)}")
+            await asyncio.sleep(5)
 
     async def run(self) -> None:
         logging.info(f"Connect to ServiceBus...")
 
-        async with ServiceBusClient.from_connection_string(self.servicebus_config.connection_str) as servicebus_client:
-            async with servicebus_client.get_queue_sender(queue_name=self.servicebus_config.response_queue) as sender:
+        async with ServiceBusClient.from_connection_string(ServiceBusConfig.connection_str) as servicebus_client:
+            async with servicebus_client.get_queue_sender(queue_name=ServiceBusConfig.response_queue) as sender:
                 while True:
                     try:
                         # 완료된 작업 제거
@@ -194,7 +227,7 @@ class ServiceBusServer:
                                 self.handle_message(
                                     servicebus_client=servicebus_client,
                                     sender=sender,
-                                    queue_name=self.servicebus_config.request_queue,
+                                    queue_name=ServiceBusConfig.request_queue,
                                 )
                             )
                             self.active_tasks.add(task)
@@ -207,10 +240,15 @@ class ServiceBusServer:
 
 
 def main() -> None:
-    logging.basicConfig(format="%(asctime)s %(funcName)s %(levelname)s:%(message)s", level=logging.INFO)
+    # 모든 관련 로거의 레벨 조정
+    logging.getLogger("uamqp").setLevel(logging.WARNING)
+    logging.getLogger("azure").setLevel(logging.WARNING)
+    logging.getLogger("azure.servicebus").setLevel(logging.WARNING)
+    logging.getLogger("azure.core").setLevel(logging.WARNING)
+    
     server = ServiceBusServer()
     try:
-        logging.info("Server starts...")
+        logging.info("Server starting...")
         asyncio.run(server.start())
 
     except KeyboardInterrupt:

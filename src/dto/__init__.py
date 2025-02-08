@@ -1,4 +1,4 @@
-from dto.batch_request import BatchRequest
-from dto.batch_response import BatchResponse
+from src.dto.request_message import RequestMessage
+from src.dto.response_message import ResponseMessage
 
-__all__ = ["BatchRequest", "BatchResponse"]
+__all__ = ["RequestMessage", "ResponseMessage"]

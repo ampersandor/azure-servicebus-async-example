@@ -1,12 +1,12 @@
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
-import logging
+import hashlib
 
 from src.config.psql_config import PSQLConfig
-from src.model.session import Session
-from .base_repository import BaseRepository
+from src.models.request import Request
+from src.repository.base_repository import BaseRepository
 
-class SessionRepository:
+class RequestRepository:
     def __init__(self):
         self.engine = create_async_engine(
             f"postgresql+asyncpg://{PSQLConfig.user}:{PSQLConfig.password}@"
@@ -16,18 +16,19 @@ class SessionRepository:
             self.engine, class_=AsyncSession, expire_on_commit=False
         )
 
-    async def create_session(self, session_id: str) -> Session:
-        """Create new session"""
+    async def create_request(self, request_id: str, command: str) -> Request:
+        """Create new request"""
         async with self.async_session() as session:
-            repo = BaseRepository(Session, session)
-            return await repo.create(session_id=session_id)
+            repo = BaseRepository(Request, session)
+            return await repo.create(request_id=request_id, command=command)
 
-    async def get_session(self, session_id: str) -> Session | None:
-        """Get session by id"""
+    async def get_request(self, request_id: str) -> Request | None:
+        """Get request by id"""
         async with self.async_session() as session:
-            repo = BaseRepository(Session, session)
-            return await repo.get(session_id=session_id)
+            repo = BaseRepository(Request, session)
+            return await repo.get(request_id=request_id)
 
     async def disconnect(self):
         """Close the database connection"""
-        await self.engine.dispose()
+        await self.engine.dispose() 
+

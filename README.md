@@ -1,7 +1,7 @@
-# Azure Service Bus Session을 활용한 장시간 배치 작업 처리
+# Azure Service Bus Job을 활용한 장시간 배치 작업 처리
 
 ## 개요
-이 프로젝트는 Azure Service Bus의 Session 기능을 사용하여 장시간 실행되는 배치 작업을 처리하는 시스템을 구현합니다.
+이 프로젝트는 Azure Service Bus의 Job 기능을 사용하여 장시간 실행되는 배치 작업을 처리하는 시스템을 구현합니다.
 
 ## 주요 특징
 - 장시간(4시간~수일) 실행되는 작업 처리
@@ -12,7 +12,7 @@
 ## 시스템 구성
 ```mermaid
 graph TD
-    A[Batch Client] -->|Request + SessionId| B[Request Queue]
+    A[Batch Client] -->|Request + JobId| B[Request Queue]
     B --> C[Server]
     C -->|Process 4h~days| D[Batch Job]
     C -->|Response| E[Response Queue]

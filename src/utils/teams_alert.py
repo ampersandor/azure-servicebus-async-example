@@ -5,21 +5,21 @@ import os
 webhook_url = os.getenv("TEAMS_WEBHOOK_URL")
 
 
-async def send_alert(self, text: str):
+async def send_alert(text: str):
     """Teams 알림 전송"""
 
-    message = create_teams_message(text)
+    # message = create_teams_message(text)
 
-    response = requests.post(
-        webhook_url,
-        headers={"Content-Type": "application/json"},
-        data=json.dumps(message),
-    )
+    # response = requests.post(
+    #     webhook_url,
+    #     headers={"Content-Type": "application/json"},
+    #     data=json.dumps(message),
+    # )
 
-    return response
+    # return response
 
 
-def create_teams_message(self, text: str) -> dict:
+def create_teams_message(text: str) -> dict:
     return {
         "type": "message",
         "attachments": [

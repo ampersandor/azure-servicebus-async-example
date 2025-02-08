@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "session-batch-server"
+name = "job-batch-server"
 version = "0.1.0"
 description = ""
 authors = ["DongHunKim <ddong3525@naver.com>"]
@@ -22,6 +22,9 @@ diskcache = "^5.6.3"
 biopython = "^1.83"
 redis = "^5.0.5"
 sqlalchemy = "^2.0.37"
+asyncpg = "^0.30.0"
+colorlog = "^6.9.0"
+greenlet = "^3.1.1"
 
 
 [build-system]
