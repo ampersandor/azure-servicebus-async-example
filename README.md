@@ -4,10 +4,48 @@
 This project implements a system for processing long-running batch jobs using Azure Service Bus Job functionality.
 
 ## Key Features
-- Processing of long-running tasks (hours to several days)
+- Processing of long-running tasks (several hours to several days)
 - Support for clients without public endpoints
 - Guaranteed reliable message delivery
-- Ability to process multiple jobs asynchronously
+- Ability to process multiple jobs simultaneously
+- Scalable architecture for high-volume processing
+- Real-time job status monitoring
+- Fault-tolerant design with automatic retries
+
+## Badges
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Azure](https://img.shields.io/badge/azure-%230072C6.svg?style=flat&logo=azure-devops&logoColor=white)](https://azure.microsoft.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
+
+## Keywords
+- Azure Service Bus
+- Batch Processing
+- Distributed Systems
+- Message Queue
+- Asynchronous Processing
+- Long-running Jobs
+- Cloud Computing
+- Enterprise Integration
+- Microservices
+- Scalable Architecture
+- Fault Tolerance
+- Python AsyncIO
+- Message Broker
+- Job Scheduling
+- Cloud Native
+
+## Use Cases
+- Large-scale data processing
+- ETL operations
+- Machine learning model training
+- Video/image processing
+- Report generation
+- Data migration
+- Batch analytics
+- Document processing
+
 
 ## System Architecture
 ```mermaid
