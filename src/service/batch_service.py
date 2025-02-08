@@ -53,6 +53,7 @@ class BatchService:
             # Check existing result
             existing_result = await self.result_repo.get_result(result_id)
             if existing_result and existing_result.status == ResultStatus.COMPLETED:
+                logging.info(f"Existing result found: {existing_result.result_path}")
                 await self.request_result_repo.create_relation(
                     request_id=request.request_id,
                     result_id=result_id
@@ -69,15 +70,24 @@ class BatchService:
             )
             
             # Process batch job
+            await self.result_repo.update_status(result_id, ResultStatus.RUNNING)
+            logging.info(f"Starting batch job with RUNNING status: {result_id}")
+            
             result_path = await self._process_batch_job(result_id, request.command)
+            
+            # Update final status and path
+            await self.result_repo.update_result_path(result_id, result_path)
+            await self.result_repo.update_status(result_id, ResultStatus.COMPLETED)
+            logging.info(f"Completed batch job: {result_id}")
+            
             return result_path
 
         except BatchServiceError as e:
-            # Known errors are logged and re-raised
+            await self.result_repo.update_status(result_id, ResultStatus.FAILED)
             logging.error(f"Batch service error: {str(e)}")
             raise
         except Exception as e:
-            # Unexpected errors are wrapped
+            await self.result_repo.update_status(result_id, ResultStatus.FAILED)
             logging.error(f"Unexpected error: {str(e)}")
             raise BatchServiceError(f"Unexpected error during batch execution: {str(e)}")
 
@@ -86,15 +96,10 @@ class BatchService:
         try:
             # Create job
             await self._create_batch_job(result_id)
-
+            
             # Create and execute task
             task_id = await self._create_batch_task(result_id, command)
-            await self.result_repo.update_status(result_id, ResultStatus.RUNNING)
-
-            # Get result
             result_path = await self._get_task_result(result_id, task_id)
-            await self.result_repo.update_result_path(result_id, result_path)
-            
             return result_path
 
         except Exception as e:
@@ -104,7 +109,6 @@ class BatchService:
         finally:
             try:
                 self._terminate_batch_job(result_id)
-                await self.result_repo.update_status(result_id, ResultStatus.COMPLETED)
             except Exception as e:
                 logging.error(f"Error during job cleanup: {str(e)}")
 

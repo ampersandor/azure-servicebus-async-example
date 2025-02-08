@@ -19,7 +19,7 @@ def send_batch_request():
     request = {
         "session_id": session_id,
         "timestamp": datetime.now().isoformat(),
-        "command": "echo 'hi33'"
+        "command": "echo 'hi34'"
     }
     servicebus_client = ServiceBusClient.from_connection_string(CONNECTION_STR)
     

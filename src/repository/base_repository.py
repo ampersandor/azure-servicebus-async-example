@@ -1,6 +1,6 @@
 from typing import TypeVar, Generic, Type
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from src.models.base import Base
 
 ModelType = TypeVar("ModelType", bound=Base)
@@ -17,12 +17,22 @@ class BaseRepository(Generic[ModelType]):
         return instance
     
     async def update(self, **kwargs) -> ModelType:
-        instance = await self.get(**kwargs)
-        if instance:
-            for key, value in kwargs.items():
-                setattr(instance, key, value)
-            await self.session.commit()
-        return instance
+        # Get primary key from kwargs
+        pk_name = self.model.__mapper__.primary_key[0].name
+        pk_value = kwargs.pop(pk_name)
+        
+        # Create update statement
+        stmt = (
+            update(self.model)
+            .where(getattr(self.model, pk_name) == pk_value)
+            .values(**kwargs)
+        )
+        
+        await self.session.execute(stmt)
+        await self.session.commit()
+        
+        # Return updated instance
+        return await self.get(**{pk_name: pk_value})
 
     async def get(self, **kwargs) -> ModelType | None:
         stmt = select(self.model).filter_by(**kwargs)
